@@ -49,7 +49,8 @@ def search_ukm_by_interest(minat: str) -> str:
             return f"DATA_NOT_FOUND: Tidak ditemukan UKM dengan kata kunci '{minat}'. Coba kata kunci yang lebih umum seperti 'Seni', 'Olahraga', atau 'Teknologi'."
         
         # Kembalikan hasil dalam bentuk string agar bisa dibaca LLM
-        return results.to_string(index=False)
+        # return results.to_string(index=False)
+        return results.to_json(orient="records")
     except Exception as e:
         return f"ERROR: {str(e)}"
 
@@ -111,33 +112,33 @@ ukm_searcher = AssistantAgent(
     Input kamu: JSON profil mahasiswa dari ProfileAnalyzer.
     Trigger kamu: Kamu hanya merespons jika pesan mengandung NEXT_AGENT: UKMDataSearcher
     Kamu tidak boleh merespons input dari user secara langsung.
+    
+    PROSEDUR KERJA:
+    1. Cek apakah ada trigger. Jika tidak, diam.
+    2. Gabungkan semua minat dari profil menjadi string dengan pemisah '|'.
+       Contoh: "Seni|Desain|Foto"
+    3. Jalankan tool: search_ukm_by_interest(minat_gabungan)
+    4. Tunggu hasil eksekusi tool.
 
-    CARA KERJA:
-    1. Cek apakah pesan mengandung trigger. Jika tidak, diam.
-    2. Baca field "minat" dari JSON profil.
-    3. PENTING: Jangan cuma ambil index 0.
-       Gabungkan SEMUA minat dengan tanda garis tegak '|'.
-       Contoh: Jika minat ["Seni", "Teknologi"], ubah menjadi string "Seni|Teknologi".
-       
-    4. Panggil fungsi: search_ukm_by_interest(string_gabungan_tadi)
-
-    5. OUTPUT JSON:
+    FORMAT OUTPUT (SANGAT KETAT):
+    Kamu HARUS mengembalikan JSON dengan format ini:
     {
-        "profile": {...},  <-- Copy persis dari input
-        "ukm_data": "...", <-- MASUKKAN HASIL MENTAH FUNGSI DISINI. JANGAN DIRANGKUM. JANGAN DIPOTONG.
+        "profile": <COPY_PASTE_PROFILE_INPUT>,
+        "ukm_data": "<COPY_PASTE_HASIL_TOOL_MENTAH_MENTAH>",
         "selected_interest": "..."
     }
 
-    6. Akhiri dengan: NEXT_AGENT: ScoringAgent
+    ATURAN MATI (DO NOT BREAK):
+    1. Field "ukm_data" HARUS berisi STRING MENTAH dari output fungsi. 
+    2. JANGAN mencoba merapikan, meringkas, atau mengubah data UKM menjadi object/list baru. 
+    3. Jika output tool adalah tabel teks berantakan, MASUKKAN APA ADANYA ke dalam string "ukm_data".
+    4. Dilarang mengarang nama UKM atau deskripsi yang tidak muncul di output tool.
+
+    Setelah menghasilkan JSON: Tambahkan satu baris di akhir:  NEXT_AGENT: ScoringAgent
 
     LARANGAN KERAS:
     - JANGAN memilihkan 1 UKM. Biarkan ScoringAgent yang memilih.
     - JANGAN meringkas output fungsi. Jika fungsi mengembalikan 10 baris, masukkan 10 baris itu ke JSON.
-
-    Setelah JSON, tambahkan baris:
-    NEXT_AGENT: ScoringAgent
-
-    Aturan wajib:
     - Jangan beri penjelasan tambahan di luar JSON.
     """,
     llm_config=llm_config,
