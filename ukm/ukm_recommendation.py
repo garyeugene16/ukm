@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from autogen import AssistantAgent, UserProxyAgent, GroupChat, GroupChatManager
 
-# 1. KONFIGURASI LLM (Ollama Local)
+# 1. Konfigurasi Ollama Local
 model = 'llama3.2:3b'
 llm_config = {
     "model": model, 
@@ -12,12 +12,12 @@ llm_config = {
     "price": [0.0, 0.0], 
 }
 
-# 2. DEFINISI TOOLS (Fungsi Python untuk Agen)
+# 2. Definisi tools yaitu fungsi untuk agen
 def search_ukm_by_interest(minat: str) -> str:
     """
     Mencari UKM berdasarkan kata kunci minat (misal: 'Seni', 'Olahraga', 'Teknologi').
     Membaca data dari ukm_data.xlsx.
-    Sekarang mencari di SEMUA kolom teks yang relevan.
+    Sekarang mencari di semua kolom teks yang relevan.
     """
     try:
         df = pd.read_excel("ukm_data.xlsx")
@@ -33,7 +33,7 @@ def search_ukm_by_interest(minat: str) -> str:
         #     df['jenis_kegiatan'].str.contains(minat, case=False, na=False)
         # )
         
-        # Filter data yang mengandung kata kunci di BANYAK kolom
+        # Filter data yang mengandung kata kunci di banyak kolom
         # Kita tambahkan pencarian di 'deskripsi' dan 'nilai_utama'
         mask = (
             df['kategori'].str.contains(minat, case=False, na=False) |
@@ -54,7 +54,7 @@ def search_ukm_by_interest(minat: str) -> str:
     except Exception as e:
         return f"ERROR: {str(e)}"
 
-# 3. DEFINISI AGEN
+# 3. Defisini Agen
 
 # Agen 1: User Proxy (Perantara User)
 user_proxy = UserProxyAgent(
@@ -74,7 +74,7 @@ user_proxy.register_function(
 profile_analyzer = AssistantAgent(
     name="ProfileAnalyzer",
     system_message="""Kamu adalah Ahli Psikologi Mahasiswa. 
-    Kamu HANYA merespons jika pesan berasal dari User_Student
+    Kamu hanya merespons jika pesan berasal dari User_Student
     Ekstrak 3 hal dari input user: 
     1. Minat Utama. PENTING: Ubah minat user menjadi Kategori Umum yang mungkin ada di kampus.
        Contoh: 
@@ -83,7 +83,7 @@ profile_analyzer = AssistantAgent(
        - "Basket/Lari" -> Ubah jadi "Olahraga"
        - "Organisasi/Bisnis" -> Ubah jadi "Sosial" atau "Akademik"
        
-       JANGAN gunakan kata spesifik seperti "Desain Grafis" untuk pencarian, gunakan kata seperti "Seni" atau "Kreatif".
+       Jangan gunakan kata spesifik seperti "Desain Grafis" untuk pencarian, gunakan kata seperti "Seni" atau "Kreatif".
 
     2. Tipe Kepribadian (Introvert/Ekstrovert).
     3. Tujuan Pengembangan Diri.
@@ -95,11 +95,11 @@ profile_analyzer = AssistantAgent(
         "goals": [...]
     }
     Setelah menghasilkan JSON: Tambahkan satu baris di akhir:  NEXT_AGENT: UKMDataSearcher
-    JANGAN memberi penjelasan lain.
+    Jangan memberi penjelasan lain.
     Hanya keluarkan JSON + NEXT_AGENT.
     
-    Jika kamu TIDAK YAKIN atau TIDAK BISA mengekstrak dengan benar,
-    TULIS: FALLBACK
+    Jika kamu tidak yakin atau tidak bisa mengekstrak dengan benar,
+    Tulis: FALLBACK
     
     """,
     llm_config=llm_config,
@@ -113,22 +113,22 @@ ukm_searcher = AssistantAgent(
     Trigger kamu: Kamu hanya merespons jika pesan mengandung NEXT_AGENT: UKMDataSearcher
     Kamu tidak boleh merespons input dari user secara langsung.
     
-    PROSEDUR KERJA:
+    Prosedur Kerja:
     1. Cek apakah ada trigger. Jika tidak, diam.
     2. Gabungkan semua minat dari profil menjadi string dengan pemisah '|'.
        Contoh: "Seni|Desain|Foto"
     3. Jalankan tool: search_ukm_by_interest(minat_gabungan)
     4. Tunggu hasil eksekusi tool.
 
-    FORMAT OUTPUT (SANGAT KETAT):
-    Kamu HARUS mengembalikan JSON dengan format ini:
+    Format Output (Wajib Diikuti):
+    Kamu harus mengembalikan JSON dengan format ini:
     {
         "profile": <COPY_PASTE_PROFILE_INPUT>,
         "ukm_data": "<COPY_PASTE_HASIL_TOOL_MENTAH_MENTAH>",
         "selected_interest": "..."
     }
 
-    ATURAN MATI (DO NOT BREAK):
+    Aturan yang tidak boleh dilanggar:
     1. Field "ukm_data" HARUS berisi STRING MENTAH dari output fungsi. 
     2. JANGAN mencoba merapikan, meringkas, atau mengubah data UKM menjadi object/list baru. 
     3. Jika output tool adalah tabel teks berantakan, MASUKKAN APA ADANYA ke dalam string "ukm_data".
@@ -136,15 +136,15 @@ ukm_searcher = AssistantAgent(
 
     Setelah menghasilkan JSON: Tambahkan satu baris di akhir:  NEXT_AGENT: ScoringAgent
 
-    LARANGAN KERAS:
-    - JANGAN memilihkan 1 UKM. Biarkan ScoringAgent yang memilih.
-    - JANGAN meringkas output fungsi. Jika fungsi mengembalikan 10 baris, masukkan 10 baris itu ke JSON.
+    Larangan yang wajib diikuti:
+    - Jangan memilihkan 1 UKM. Biarkan ScoringAgent yang memilih.
+    - Jangan meringkas output fungsi. Jika fungsi mengembalikan 10 baris, masukkan 10 baris itu ke JSON.
     - Jangan beri penjelasan tambahan di luar JSON.
     """,
     llm_config=llm_config,
 )
 
-# Daftarkan signature fungsi ke ukm_searcher agar dia tahu cara panggilnya
+# Daftarkan fungsi ke ukm_searcher agar dia tahu cara panggilnya
 ukm_searcher.register_function(
     function_map={"search_ukm_by_interest": search_ukm_by_interest}
 )
@@ -154,9 +154,9 @@ scoring_agent = AssistantAgent(
     name="ScoringAgent",
     system_message=""" Kamu adalah agen penilai kecocokan UKM, yakni agen scoring.
     Kamu hanya merespons jika pesan mengandung: NEXT_AGENT: ScoringAgent
-    ATURAN WAJIB:
-    1. HANYA gunakan data UKM yang diberikan oleh UKMDataSearcher.
-    2. JANGAN PERNAH mengarang nama UKM yang tidak ada di data Excel.
+    Aturan Wajib:
+    1. Hanya gunakan data UKM yang diberikan oleh UKMDataSearcher.
+    2. Jangan pernah mengarang nama UKM yang tidak ada di data Excel.
     3. Jika data UKM kosong atau "DATA_NOT_FOUND", output JSON dengan array "best_ukm" kosong.
     Sumber input:
     - Kamu akan menerima pesan dari UKMDataSearcher.
@@ -165,7 +165,7 @@ scoring_agent = AssistantAgent(
     
 
     Aturan:
-    1. Jika pesan TIDAK mengandung NEXT_AGENT: ScoringAgent, Jangan menjawab apa pun.
+    1. Jika pesan tidak mengandung NEXT_AGENT: ScoringAgent, Jangan menjawab apa pun.
 
     2. Jika pesan valid:
     - Baca JSON yang diberikan.
@@ -179,7 +179,7 @@ scoring_agent = AssistantAgent(
         • kecocokan goals
         • relevansi interest
 
-    3. Output kamu HARUS dalam format JSON berikut:
+    3. Output kamu harus dalam format JSON berikut:
 
     {
         "profile": {...},
@@ -205,7 +205,7 @@ writer_agent = AssistantAgent(
     name="RecommendationWriter",
     system_message="""Kamu adalah Konselor Akademik yang bijak dan persuasif.
     Kapan kamu harus berbicara:
-    - Kamu HANYA merespons jika pesan mengandung: NEXT_AGENT: RecommendationWriter
+    - Kamu hanya merespons jika pesan mengandung: NEXT_AGENT: RecommendationWriter
     - Jika tidak ada trigger itu, JANGAN menjawab apa pun.
 
     Input dari ScoringAgent akan berupa JSON:
@@ -237,10 +237,10 @@ writer_agent = AssistantAgent(
 # 4. ORKESTRASI (Group Chat)
 # Definisikan siapa boleh bicara ke siapa (Sesuai Diagram Alur)
 allowed_transitions = {
-    user_proxy: [profile_analyzer],       # User HANYA boleh lanjut ke ProfileAnalyzer
-    profile_analyzer: [ukm_searcher],     # ProfileAnalyzer HANYA boleh lanjut ke Searcher
-    ukm_searcher: [scoring_agent],        # Searcher HANYA boleh lanjut ke Scoring
-    scoring_agent: [writer_agent],        # Scoring HANYA boleh lanjut ke Writer
+    user_proxy: [profile_analyzer],       # User hanya boleh lanjut ke ProfileAnalyzer
+    profile_analyzer: [ukm_searcher],     # ProfileAnalyzer hanya boleh lanjut ke Searcher
+    ukm_searcher: [scoring_agent],        # Searcher hanya boleh lanjut ke Scoring
+    scoring_agent: [writer_agent],        # Scoring hanya boleh lanjut ke Writer
     writer_agent: [user_proxy],           # Writer kembalikan ke User (untuk Terminate)
 }
 groupchat = GroupChat(
@@ -254,7 +254,7 @@ groupchat = GroupChat(
 
 manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
 
-# 5. INPUT USER & START
+# 5.Input User dan Start
 
 print("=== SISTEM REKOMENDASI UKM ===")
 print("Silakan tuliskan deskripsi diri Anda.")
