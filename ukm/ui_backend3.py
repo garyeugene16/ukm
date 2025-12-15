@@ -1,4 +1,5 @@
 import sys
+import os
 import queue
 import pandas as pd
 import json
@@ -30,7 +31,7 @@ llm_config = {
     "api_key": "ollama",
     "base_url": "http://localhost:11434/v1",  # alamat server di komputer sendiri
     "temperature": 0.3, # tingkat kreativitas ai, rendah berarti lebih patuh aturan
-    "max_tokens": 4096, # batas maksimal panjang jawaban
+    "max_tokens": 8192, # batas maksimal panjang jawaban
     "price": [0.0, 0.0], 
 }
 
@@ -40,7 +41,11 @@ def get_ukm_data_from_excel(keywords: str) -> str:
         # Tampilkan log ke UI
         print(f"\n[SYSTEM] Sedang mencari di UKM_DATA... Kata Kunci: {keywords}")
         
-        df = pd.read_excel("ukm/ukm_data.xlsx") # baca file excel yang berisi daftar ukm
+        base_dir = os.path.dirname(__file__)
+        file_path = os.path.join(base_dir, "ukm_data.xlsx")
+        print(f"\n[SYSTEM] Sedang mencari di {file_path}... Kata Kunci: {keywords}")
+        
+        df = pd.read_excel(file_path) # baca file excel yang berisi daftar ukm
         df = df.fillna("Tidak disebutkan") # isi data yang kosong dengan tulisan tidak disebutkan agar tidak error
         df = df.astype(str) # ubah semua format data menjadi teks
         
@@ -68,10 +73,10 @@ def get_ukm_data_from_excel(keywords: str) -> str:
 
         # jika hasil pencarian kosong berikan pesan status kosong
         if all_results.empty:
-            return "DATABASE_STATUS: KOSONG. Tidak ada UKM yang cocok dengan kriteria."
+            return "DATABASE_STATUS: KOSONG. Tidak ada UKM yang cocok dengan kriteria. TERMINATE"
         
-        # Ambil maksimal 5 agar LLM punya pilihan tapi tidak overload
-        limit = 5
+        # Ambil maksimal 10 agar LLM punya pilihan lebih banyak
+        limit = 10
         final_results = all_results.head(limit)
         
         return f"DATABASE_RESULT:\n{final_results.to_json(orient='records')}"
@@ -113,6 +118,13 @@ class FiveAgentStrictChat(GroupChat):
             return get_agent("UKMDataSearcher")
         
         if last_speaker.name == "UKMDataSearcher":
+            # Jika hasil search mengandung TERMINATE, maka stop (kembali ke User_Student)
+            # Pesan terakhir ada di self.messages[-1]
+            if self.messages:
+                last_content = self.messages[-1].get('content', '')
+                if "TERMINATE" in last_content:
+                    return get_agent("User_Student")
+
             return get_agent("ScoringAgent")
 
         if last_speaker.name == "ScoringAgent":
@@ -146,10 +158,11 @@ def run_chat_session(user_story):
         profile = AssistantAgent(
             name="ProfileAnalyzer",
             # perintah untuk hanya mengeluarkan kata kunci
-            system_message="""Tugas: Ekstrak minat user menjadi kata kunci pencarian.
+            system_message="""Tugas: Analisis cerita user dan ekstrak TOPIK KEGIATAN konkret (Contoh: Basket, Koding, Teater, Musik). 
+            HINDARI kata sifat umum/soft-skill seperti 'Tim', 'Sosial', 'Belajar', 'Kreatif' kecuali jika itu adalah satu-satunya petunjuk.
+            Fokus pada Kata Benda/Subjek.
             Output HANYA kata kunci dipisah koma.
-            Contoh: Seni, Fotografi, Teknologi.
-            JANGAN ada kata lain.""",
+            Contoh: Fotografi, Teknologi, Seni Rupa.""",
             llm_config=llm_config,
         )
 
@@ -179,6 +192,7 @@ def run_chat_session(user_story):
             1. Analisis data JSON "DATABASE_RESULT" yang diberikan UKMDataSearcher.
             2. Pilih MAKSIMAL 3 UKM yang paling relevan dengan minat user.
             3. Jika minat user beragam, pilih variasi kategori.
+            4. PASTIKAN JSON valid dan lengkap. Jangan biarkan terpotong. 
 
             Format Output Wajib (JSON Murni):
             ```json
@@ -187,17 +201,17 @@ def run_chat_session(user_story):
                     {
                         "name": "Nama UKM 1",
                         "schedule": "Jadwal",
-                        "reason": "Alasan detail kenapa cocok"
+                        "reason": "Alasan singkat & padat kenapa cocok (maks 2 kalimat)"
                     },
                      {
                         "name": "Nama UKM 2",
                         "schedule": "Jadwal",
-                        "reason": "Alasan detail kenapa cocok"
+                        "reason": "Alasan singkat & padat kenapa cocok (maks 2 kalimat)"
                     },
                     {
                         "name": "Nama UKM 3",
                         "schedule": "Jadwal",
-                        "reason": "Alasan detail kenapa cocok"
+                        "reason": "Alasan singkat & padat kenapa cocok (maks 2 kalimat)"
                     }
                 ]
             }
@@ -215,8 +229,21 @@ def run_chat_session(user_story):
             
             Tugas:
             1. Baca JSON rekomendasi dari ScoringAgent.
-            2. Ubah data tersebut menjadi narasi surat rekomendasi yang personal, ramah, dan memotivasi.
-            3. Jangan tampilkan JSON lagi, tapi tuliskan dalam bentuk paragraf atau poin-poin yang enak dibaca.
+            2. Tulis surat rekomendasi yang personal dan memotivasi untuk mahasiswa tersebut.
+            
+            PENTING (WAJIB AGAR SISTEM BEKERJA):
+            Setelah selesai menulis surat, kamu HARUS menyalin ulang JSON rekomendasi persis seperti yang diberikan ScoringAgent di bagian paling bawah.
+            Gunakan format tag khusus: ```json_final ... ```
+            
+            Contoh Output Kamu:
+            "Halo, berdasarkan minatmu blablabla...." (Surat Narasi)
+            
+            Di ikuti dengan data JSON (WAJIB)
+            ```json_final
+            {
+                "recommendations": [...]
+            }
+            ```
             
             Akhiri pesanmu dengan kata: TERMINATE
             """,

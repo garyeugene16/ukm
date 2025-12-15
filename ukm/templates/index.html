@@ -67,13 +67,13 @@
             <div class="card main-card">
                 <div class="card-header bg-white p-4 text-center">
                     <h2 class="fw-bold text-dark"><i class="fas fa-university me-2"></i>Sistem Rekomendasi UKM</h2>
-                    <p class="text-muted small">Menggunakan Database UKM dan LLM Ollama</p>
+                    <p class="text-muted small">Menggunakan Konsep Multi Agen, Database UKM, Autogen, dan LLM Ollama</p>
                 </div>
                 
                 <div class="card-body p-4">
                     <div class="step-container px-5">
                         <div id="step-1" class="step-item active"><i class="fas fa-user-edit fa-2x mb-2"></i><br>Masukan Cerita</div>
-                        <div id="step-2" class="step-item"><i class="fas fa-search-dollar fa-2x mb-2"></i><br>Analisis LLM</div>
+                        <div id="step-2" class="step-item"><i class="fas fa-search-dollar fa-2x mb-2"></i><br>Analisis Multi Agen</div>
                         <div id="step-3" class="step-item"><i class="fas fa-balance-scale fa-2x mb-2"></i><br>Rekomendasi Akhir</div>
                     </div>
 
@@ -155,84 +155,97 @@
                 div.className = 'log-line';
                 
                 let content = data.content;
-                if(content.includes("Intention_Analyst")) div.classList.add('log-agent');
+                
+                // Coloring Logic
+                if(content.includes("ProfileAnalyzer")) div.classList.add('log-agent');
                 else if(content.includes("DATABASE_RESULT")) div.classList.add('log-system');
-                else if(content.includes("Ukm_Advisor")) {
+                else if(content.includes("ScoringAgent")) div.classList.add('log-agent');
+                else if(content.includes("RecommendationWriter")) {
                     div.classList.add('log-agent');
                     setStep(3);
                 }
                 
-                div.innerText = content.substring(0, 200) + (content.length > 200 ? '...' : ''); 
+                // --- PERBAIKAN PENTING: TAMPILKAN FULL TEXT ---
+                div.innerText = content; 
+                // ----------------------------------------------
+
                 terminal.appendChild(div);
                 terminal.scrollTop = terminal.scrollHeight;
 
+                // Cek apakah ada JSON rahasia untuk Popup
                 extractFinalJson(content);
             }
         };
     }
 
     function extractFinalJson(text) {
-        const regex = /```json_final([\s\S]*?)```/;
-        const match = text.match(regex);
+        // PERBAIKAN: Regex ini sekarang menerima ```json ATAU ```json_final
+        // Flag 'g' dan 'i' (global & insensitive) untuk mencari semua kemungkinan
+        const regex = /```(?:json|json_final)?([\s\S]*?)```/gi;
         
-        if(match && match[1]) {
+        let match;
+        // Kita lakukan Loop untuk mencari blok kode yang isinya benar-benar JSON rekomendasi
+        while ((match = regex.exec(text)) !== null) {
             try {
-                const data = JSON.parse(match[1]);
-                const listContainer = document.getElementById('recommendation-list');
-                const cardElement = document.querySelector('.ticket-card');
+                const jsonStr = match[1].trim();
+                const data = JSON.parse(jsonStr);
                 
-                listContainer.innerHTML = ''; // Bersihkan isi lama
-                
-                const recs = data.recommendations || [];
-                
-                // --- LOGIKA GRID & LEBAR ---
-                if (recs.length > 1) {
-                    // Jika lebih dari 1, lebarkan kartu dan aktifkan Grid Row
-                    cardElement.classList.add('ticket-card-wide');
-                    listContainer.className = 'ticket-body row g-3'; // Bootstrap Row
-                } else {
-                    // Jika cuma 1, kembalikan ke ukuran tiket kecil
-                    cardElement.classList.remove('ticket-card-wide');
-                    listContainer.className = 'ticket-body';
-                }
-
-                // Loop data
-                recs.forEach((item, index) => {
-                    // Tentukan lebar kolom: Kalau banyak item pakai col-md-6 (setengah), kalau 1 pakai col-12 (full)
-                    const colClass = recs.length > 1 ? 'col-md-6' : 'col-12';
+                // VALIDASI: Pastikan JSON ini punya key 'recommendations'
+                if (data.recommendations) {
+                    // JIKA KETEMU, PROSES RENDER:
                     
-                    // Style warna selang-seling
-                    const themeColor = index === 0 ? 'primary' : 'success'; 
-                    const badgeColor = index === 0 ? 'bg-primary' : 'bg-success';
+                    const listContainer = document.getElementById('recommendation-list');
+                    const cardElement = document.querySelector('.ticket-card');
+                    
+                    listContainer.innerHTML = ''; 
+                    
+                    const recs = data.recommendations || [];
+                    
+                    // Logika Layout 1 vs 2 Kolom
+                    if (recs.length > 1) {
+                        cardElement.classList.add('ticket-card-wide');
+                        listContainer.className = 'ticket-body row g-3'; 
+                    } else {
+                        cardElement.classList.remove('ticket-card-wide');
+                        listContainer.className = 'ticket-body';
+                    }
 
-                    const html = `
-                        <div class="${colClass}">
-                            <div class="card h-100 border-${themeColor} shadow-sm">
-                                <div class="card-header bg-transparent border-0 pt-3 pb-0">
-                                    <span class="badge ${badgeColor}">Pilihan #${index + 1}</span>
-                                </div>
-                                <div class="card-body">
-                                    <h4 class="card-title fw-bold text-dark">${item.name}</h4>
-                                    
-                                    <div class="p-2 bg-light rounded mt-2 mb-2">
-                                        <small class="text-muted d-block"><i class="far fa-calendar-alt"></i> Jadwal</small>
-                                        <div class="fw-bold text-dark small">${item.schedule}</div>
+                    // Loop Render Kartu
+                    recs.forEach((item, index) => {
+                        const colClass = recs.length > 1 ? 'col-md-6' : 'col-12';
+                        const themeColor = index === 0 ? 'primary' : 'success'; 
+                        const badgeColor = index === 0 ? 'bg-primary' : 'bg-success';
+
+                        const html = `
+                            <div class="${colClass}">
+                                <div class="card h-100 border-${themeColor} shadow-sm">
+                                    <div class="card-header bg-transparent border-0 pt-3 pb-0">
+                                        <span class="badge ${badgeColor}">Pilihan #${index + 1}</span>
                                     </div>
-                                    
-                                    <small class="text-muted d-block mt-2"><i class="far fa-comment-dots"></i> Alasan:</small>
-                                    <p class="card-text small text-secondary fst-italic mb-0">"${item.reason}"</p>
+                                    <div class="card-body">
+                                        <h4 class="card-title fw-bold text-dark">${item.name}</h4>
+                                        
+                                        <div class="p-2 bg-light rounded mt-2 mb-2">
+                                            <small class="text-muted d-block"><i class="far fa-calendar-alt"></i> Jadwal</small>
+                                            <div class="fw-bold text-dark small">${item.schedule}</div>
+                                        </div>
+                                        
+                                        <small class="text-muted d-block mt-2"><i class="far fa-comment-dots"></i> Alasan:</small>
+                                        <p class="card-text small text-secondary fst-italic mb-0">"${item.reason}"</p>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    `;
-                    listContainer.innerHTML += html;
-                });
-                
-                // TAMPILKAN POPUP (Pakai style display, bukan Bootstrap Modal)
-                document.getElementById('resultPopup').style.display = 'flex';
-                
+                        `;
+                        listContainer.innerHTML += html;
+                    });
+                    
+                    // Tampilkan Popup dan HENTIKAN PENCARIAN (break loop)
+                    document.getElementById('resultPopup').style.display = 'flex';
+                    return; 
+                }
             } catch(e) { 
-                console.error("JSON Parse Error", e); 
+                // Jika blok kode bukan JSON (misal kode python), abaikan dan lanjut cari berikutnya
+                continue; 
             }
         }
     }
