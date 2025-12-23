@@ -5,7 +5,7 @@ import pandas as pd
 import json
 from autogen import AssistantAgent, UserProxyAgent, GroupChat, GroupChatManager
 
-# antrian untuk menyimpan pesan yang akan dikirim ke tampilan pengguna
+# Global Queue
 msg_queue = queue.Queue()
 
 # kelas khusus untuk menangkap teks yang biasanya muncul di layar hitam atau terminal
@@ -13,52 +13,45 @@ class IOQueue:
     # fungsi ini jalan otomatis setiap ada teks yang mau dicetak
     def write(self, message):
         text = message.strip()
-        # jika teksnya tidak kosong maka proses
+        # jika pesan ada
         if text:
-            # Filter hanya pesan sistem internal autogen yang tidak perlu
-            if "Context" in text: 
-                return
-            
-            # masukkan pesan ke antrean agar bisa dibaca di layar aplikasi
+            # jika itu pesan dari sistem internal autogen, maka lewati
+            if "Context" in text: return
+            # masukin message ke queue agar bisa tampil di aplikasi
             msg_queue.put({"type": "log", "content": text})
 
     def flush(self):
         pass
 
-# pengaturan llm yang akan dipakai
+# konfigurasi LLM yang digunakan dengan platform Ollama
 llm_config = {
-    "model": 'llama3.2:3b', # nama model ai yang digunakan
+    "model": 'qwen2.5:3b', 
     "api_key": "ollama",
-    "base_url": "http://localhost:11434/v1",  # alamat server di komputer sendiri
-    "temperature": 0.3, # tingkat kreativitas ai, rendah berarti lebih patuh aturan
-    "max_tokens": 8192, # batas maksimal panjang jawaban
+    "base_url": "http://localhost:11434/v1", 
+    "temperature": 0.1, 
+    "max_tokens": 8000, 
     "price": [0.0, 0.0], 
 }
 
 # fungsi untuk mencari data ukm dari file excel
 def get_ukm_data_from_excel(keywords: str) -> str:
     try:
-        # Tampilkan log ke UI
         print(f"\n[SYSTEM] Sedang mencari di UKM_DATA... Kata Kunci: {keywords}")
         
         base_dir = os.path.dirname(__file__)
         file_path = os.path.join(base_dir, "ukm_data.xlsx")
-        print(f"\n[SYSTEM] Sedang mencari di {file_path}... Kata Kunci: {keywords}")
         
-        df = pd.read_excel(file_path) # baca file excel yang berisi daftar ukm
-        df = df.fillna("Tidak disebutkan") # isi data yang kosong dengan tulisan tidak disebutkan agar tidak error
-        df = df.astype(str) # ubah semua format data menjadi teks
+        df = pd.read_excel(file_path)
+        df = df.fillna("Tidak disebutkan")
+        df = df.astype(str)
         
-        search_terms = [k.strip().lower() for k in keywords.split(",")] # pecah kata kunci pencarian berdasarkan tanda koma dan huruf kecilkan
+        search_terms = [k.strip().lower() for k in keywords.split(",")]
         all_results = pd.DataFrame()
 
-        # lakukan pencarian untuk setiap kata kunci
         for term in search_terms:
-            # jika kata kuncinya semua maka ambil semua data
             if term in ["all", "semua", ""]:
                 mask = [True] * len(df)
             else:
-                # cari kecocokan kata di nama, kategori, deskripsi, atau nilai utama
                 mask = (
                     df['nama_ukm'].str.lower().str.contains(term) |
                     df['kategori'].str.lower().str.contains(term) |
@@ -66,21 +59,22 @@ def get_ukm_data_from_excel(keywords: str) -> str:
                     df['deskripsi'].str.lower().str.contains(term) |
                     df['nilai_utama'].str.lower().str.contains(term)
                 )
-            matched = df[mask] # ambil data yang cocok
-            all_results = pd.concat([all_results, matched]) # gabungkan hasil pencarian ini dengan hasil sebelumnya
+            matched = df[mask]
+            all_results = pd.concat([all_results, matched])
         
-        all_results = all_results.drop_duplicates(subset=['nama_ukm']) # hapus data ukm yang muncul ganda atau kembar
+        all_results = all_results.drop_duplicates(subset=['nama_ukm'])
 
-        # jika hasil pencarian kosong berikan pesan status kosong
+        # Jika gak ketemu ukm dengan kata kunci di excel, maka kasih pesan dan terminate
         if all_results.empty:
             return "DATABASE_STATUS: KOSONG. Tidak ada UKM yang cocok dengan kriteria. TERMINATE"
         
-        # Ambil maksimal 10 agar LLM punya pilihan lebih banyak
+        # ambil maksimal 10 untuk konsistensi rekomendasi
         limit = 10
         final_results = all_results.head(limit)
         
+        # log untuk kasi tahu ketemu berapa baris
         return f"DATABASE_RESULT:\n{final_results.to_json(orient='records')}"
-
+    # jika terjadi masalah atau error sistem
     except Exception as e:
         return f"SYSTEM ERROR: {str(e)}"
 
@@ -99,7 +93,7 @@ def searcher_auto_reply(recipient, messages, sender, config):
     # jalankan fungsi pencarian excel menggunakan kata kunci dari pesan tadi
     excel_result = get_ukm_data_from_excel(last_content)
     
-    # Return True agar LLM tidak dipanggil, melainkan hasil ini yang dipakai
+    # return True agar LLM tidak dipanggil, melainkan hasil ini yang dipakai
     return True, excel_result
 
 # kelas khusus untuk mengatur urutan bicara agen secara kaku
@@ -111,63 +105,100 @@ class FiveAgentStrictChat(GroupChat):
                 if agent.name == name: return agent
             return self.agents[0]
 
+        # untuk mengamankan masalah looping
+        # jika ada pesan yang mengandung 'json_final', paksa kembali ke User_Student untuk terminasi
+        if self.messages:
+            last_content = self.messages[-1].get('content', '')
+            if "json_final" in last_content or "TERMINATE" in last_content:
+                return get_agent("User_Student")
+
         if last_speaker.name == "User_Student":
             return get_agent("ProfileAnalyzer")
-
+        
         if last_speaker.name == "ProfileAnalyzer":
             return get_agent("UKMDataSearcher")
         
         if last_speaker.name == "UKMDataSearcher":
-            # Jika hasil search mengandung TERMINATE, maka stop (kembali ke User_Student)
-            # Pesan terakhir ada di self.messages[-1]
+            # Jika hasil search kosong
             if self.messages:
                 last_content = self.messages[-1].get('content', '')
                 if "TERMINATE" in last_content:
                     return get_agent("User_Student")
-
             return get_agent("ScoringAgent")
-
+        
         if last_speaker.name == "ScoringAgent":
             return get_agent("RecommendationWriter")
-
+        
         if last_speaker.name == "RecommendationWriter":
-            return get_agent("User_Student") # Selesai
-        # kondisi standar kembali ke murid
+            return get_agent("User_Student")
+
         return get_agent("User_Student")
 
 # fungsi utama untuk menjalankan sesi obrolan
 def run_chat_session(user_story):
-    # simpan pengaturan layar asli komputer
     original_stdout = sys.stdout
-    # alihkan tampilan layar ke sistem antrean kita
     sys.stdout = IOQueue()
     
     try:
-        # --- DEFINISI 5 AGEN ---
-
-        # agen 1 pengguna sebagai murid
+        # DEFINISI 5 AGEN
+        # agen ke-1 pengguna sebagai murid
         user = UserProxyAgent(
             name="User_Student",
             system_message="Student.",
-            human_input_mode="NEVER", #tidak ada input dari manusia
+            human_input_mode="NEVER",
             code_execution_config=False,
-            is_termination_msg=lambda x: "TERMINATE" in x.get("content", "") # chat berhenti jika ada kata terminate
+            # Ini pemicu rem tangan (Stop)
+            is_termination_msg=lambda x: "TERMINATE" in x.get("content", "")
         )
 
-        # agen 2 analis profil bertugas ekstrak minat
+        # agen ke-2 yang berperan sebaagai analisis profile berdasarkan input user story pengguna
         profile = AssistantAgent(
             name="ProfileAnalyzer",
-            # perintah untuk hanya mengeluarkan kata kunci
-            system_message="""Tugas: Analisis cerita user dan ekstrak TOPIK KEGIATAN konkret (Contoh: Basket, Koding, Teater, Musik). 
-            HINDARI kata sifat umum/soft-skill seperti 'Tim', 'Sosial', 'Belajar', 'Kreatif' kecuali jika itu adalah satu-satunya petunjuk.
-            Fokus pada Kata Benda/Subjek.
+            system_message="""Tugas: Kamu adalah penerjemah minat user menjadi KATA KUNCI DATABASE UKM.
+            
+            PENTING: Jangan gunakan kata umum jika user spesifik. Gunakan tabel di bawah ini sebagai acuan mutlak.
+            
+            KAMUS PEMETAAN (Input User -> Output Keyword):
+            
+            [OLAHRAGA]
+            - Basket, NBA, Dribble, Ring -> "Basket"
+            - Bola, Sepakbola, Futsal, Kiper -> "Futsal"
+            - Lari, Fisik, Gym, Sport, Bulu Tangkis, Tennis, Padel -> "Olahraga"
+            
+            [SENI & MUSIK]
+            - Band, Gitar, Drum, Bass, Ngeband -> "Band, Musik"
+            - Nyanyi, Vokal, Choir, Suara -> "Paduan Suara"
+            - Nari, Dance, Tradisional, Gerak -> "Tari"
+            - Foto, Kamera, Video, Editing, Gambar, Desain -> "Fotografi"
+            - Akting, Drama, Peran, Panggung, Film -> "Teater"
+            
+            [TEKNOLOGI & ILMIAH]
+            - Koding, Coding, Programmer, Web, App, IT-> "Coding, Teknologi"
+            - Robot, Elektro, Rakit, Mekanik -> "Robotika"
+            
+            [SOSIAL & LAINNYA]
+            - Gunung, Hiking, Camping, Hutan, Alam, Outdoor, Staycation, Outing -> "Mapala, Alam"
+            - Inggris, Public Speaking, Ngomong, Debat, Pidato -> "Debat"
+            - Bisnis, Jualan, Usaha, Dagang, Startup, Saham -> "Entrepreneur"
+            - Menulis, Nulis, Berita, Artikel, Jurnalistik, Baca -> "Pers"
+            - Medis, P3K, Kesehatan, Dokter, Palang Merah -> "KSR"
+            - Islam, Ngaji, Dakwah, Rohis -> "Kerohanian Islam"
+            
+            ATURAN KERAS:
+            1. JANGAN menambah keyword yang tidak disebut user.
+            2. Jika user HANYA bicara musik, JANGAN output Coding/Teknologi.
+            3. Fokus pada kata benda aktivitas yang disebut user.
+            4. Jika minat user TIDAK ADA di kamus (Contoh: Masak, Otomotif, Tidur), JANGAN DIPAKSAKAN ke kategori lain.
+            
+            CONTOH BENAR:
+            User: "Suka musik" -> Band, Musik
+            User: "Suka naik gunung" -> Mapala
+            
             Output HANYA kata kunci dipisah koma.
-            Contoh: Fotografi, Teknologi, Seni Rupa.""",
+            """,
             llm_config=llm_config,
         )
-
-        # 3. UKM Data Searcher (Executor)
-        # # agen pencarian data
+        # agen ke-3 yang berfungsi untuk mencari data ke excel berdasarkan kata kunci dari agen sebelumnya
         searcher = UserProxyAgent(
             name="UKMDataSearcher",
             system_message="Executor Pencarian Data.",
@@ -175,87 +206,77 @@ def run_chat_session(user_story):
             code_execution_config=False, 
         )
         
-        # pasang fungsi perantara ke agen ini agar dia menjalankan kode untuk mencari di excel
         searcher.register_reply(
-            trigger=lambda x: True, # Selalu trigger ketika giliran dia
+            trigger=lambda x: True,
             reply_func=searcher_auto_reply, 
             position=0
         )
 
-        # agen 4 penilai bertugas memilih ukm terbaik dari hasil pencarian
+        # agen ke-4 yang berfungsi untuk ranking ukm yang telah di cari oleh agen sebelumnya dan mencocokanya dengan user story
         scoring = AssistantAgent(
             name="ScoringAgent",
-            # perintah untuk memilih maksimal 3 ukm dan format json
-            system_message="""Kamu adalah Advisor Kampus. 
+            system_message="""Kamu adalah Data Filter.
             
-            Tugasmu:
-            1. Analisis data JSON "DATABASE_RESULT" yang diberikan UKMDataSearcher.
-            2. Pilih MAKSIMAL 3 UKM yang paling relevan dengan minat user.
-            3. Jika minat user beragam, pilih variasi kategori.
-            4. PASTIKAN JSON valid dan lengkap. Jangan biarkan terpotong. 
-
-            Format Output Wajib (JSON Murni):
+            Tugas:
+            1. Dari "DATABASE_RESULT", pilih 2-3 UKM terbaik.
+            2. PENTING: Jika keyword user mencakup BERBEDA KATEGORI (Misal: Teknologi DAN Seni), JANGAN pilih Teknologi semua. Ambil 1 Teknologi dan 1 Seni agar seimbang.
+            3. Siapkan data alasan kasar.
+            
+            Output JSON Sederhana (Raw Data):
             ```json
             {
-                "recommendations": [
+                "selected_data": [
                     {
-                        "name": "Nama UKM 1",
+                        "name": "Nama UKM",
                         "schedule": "Jadwal",
-                        "reason": "Alasan singkat & padat kenapa cocok (maks 2 kalimat)"
-                    },
-                     {
-                        "name": "Nama UKM 2",
-                        "schedule": "Jadwal",
-                        "reason": "Alasan singkat & padat kenapa cocok (maks 2 kalimat)"
-                    },
-                    {
-                        "name": "Nama UKM 3",
-                        "schedule": "Jadwal",
-                        "reason": "Alasan singkat & padat kenapa cocok (maks 2 kalimat)"
+                        "raw_match": "Alasan kasar (cocok keyword apa)"
                     }
                 ]
             }
             ```
-            JANGAN menulis TERMINATE. Cukup berikan JSON saja agar Writer bisa membacanya.
+            JANGAN PAKAI FORMAT json_final. JANGAN TERMINATE.
             """,
             llm_config=llm_config,
         )
 
-        # 5. Writer Agent
-        # agen 5 penulis bertugas merangkai kata kata manis untuk user
+        # agen ke-5 adalah agen terakhir yang membuat narasi alasan, dan output data ukm dengan format JSON kustom agar terlihat di aplikasi
         writer = AssistantAgent(
             name="RecommendationWriter",
-            system_message="""Kamu adalah Konselor Akademik.
+            system_message="""Kamu adalah Seorang Penulis Yang Handal dan Selalu Menulis kata TERMINATE di setiap akhiran jawabanmu.
             
             Tugas:
-            1. Baca JSON rekomendasi dari ScoringAgent.
-            2. Tulis surat rekomendasi yang personal dan memotivasi untuk mahasiswa tersebut.
+            1. Ambil data mentah.
+            2. Buat JSON Final untuk UI.
             
-            PENTING (WAJIB AGAR SISTEM BEKERJA):
-            Setelah selesai menulis surat, kamu HARUS menyalin ulang JSON rekomendasi persis seperti yang diberikan ScoringAgent di bagian paling bawah.
-            Gunakan format tag khusus: ```json_final ... ```
+            Untuk "long_reason":
+            - Gunakan bahasa yang asik dan mengajak.
+            - JANGAN meniru contoh secara buta. Sesuaikan dengan topik UKM-nya.
+            - Jika UKM Musik, bahas musik. Jika UKM Bola, bahas bola.
             
-            Contoh Output Kamu:
-            "Halo, berdasarkan minatmu blablabla...." (Surat Narasi)
-            
-            Di ikuti dengan data JSON (WAJIB)
+            FORMAT WAJIB (Sampai ke TERMINATE):
             ```json_final
             {
-                "recommendations": [...]
+                "recommendations": [
+                    {
+                        "name": "...",
+                        "schedule": "...",
+                        "short_reason": "Headline singkat",
+                        "long_reason": "Paragraf persuasif yang relevan dengan UKM tersebut..."
+                    }
+                ]
             }
             ```
-            
-            Akhiri pesanmu dengan kata: TERMINATE
+            TERMINATE
             """,
             llm_config=llm_config,
         )
-
+        
         # orkestrasi
         # wadah grup obrolan dengan aturan urutan bicara yang kaku
         groupchat = FiveAgentStrictChat(
             agents=[user, profile, searcher, scoring, writer],
             messages=[],
-            max_round=10,
+            max_round=5,
             speaker_selection_method="auto", 
             allow_repeat_speaker=False
         )
@@ -268,8 +289,8 @@ def run_chat_session(user_story):
             manager,
             message=user_story
         )
-
-    except Exception as e: # tangkap error jika ada masalah besar
+    # untuk catch error ketika terjadi masalah
+    except Exception as e:
         msg_queue.put({"type": "log", "content": f"CRITICAL ERROR: {str(e)}"})
     finally:
         sys.stdout = original_stdout
